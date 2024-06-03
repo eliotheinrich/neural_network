@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Frame.h>
+#include <stdexcept>
 
 #include "BooleanNeuralNetwork.hpp"
 
@@ -14,7 +15,10 @@ class LatticeNeuralSimulator: public dataframe::Simulator {
     double eta;
     double p;
     int connection_distribution;
+    int dim;
     bool obc;
+
+    bool sample_configurations;
 
     double sample_connection_strength() {
       if (connection_distribution == NNS_UNIFORM) {
@@ -39,7 +43,7 @@ class LatticeNeuralSimulator: public dataframe::Simulator {
       return mod(x) + mod(y) * system_size;
     }
 
-    void init_state() {
+    void init_2d_state() {
       size_t N = system_size*system_size;
 
       state = BooleanNeuralNetwork(N);
@@ -62,6 +66,39 @@ class LatticeNeuralSimulator: public dataframe::Simulator {
           }
         }
       }
+    }
+
+    void init_1d_state() {
+      size_t N = system_size;
+
+      state = BooleanNeuralNetwork(N);
+
+      for (int x = 0; x < N; x++) {
+        if (obc && (x == 0 || x == system_size - 1)) {
+          continue;
+        }
+
+        size_t i1 = mod(x + 1);
+        size_t i2 = mod(x - 1);
+
+        std::vector<size_t> inds{i1, i2};
+
+        if (randf() < p) {
+          for (auto j : inds) {
+            state.connections.add_directed_edge(j, x, sample_connection_strength());
+          }
+        }
+      }
+    }
+
+    void init_state() {
+      if (dim == 1) {
+        init_1d_state();
+      } else if (dim == 2) {
+        init_2d_state();
+      } else {
+          throw std::runtime_error("State dim must be 1 or 2.");
+      }
 
       state.randomize(rng);
     }
@@ -73,6 +110,10 @@ class LatticeNeuralSimulator: public dataframe::Simulator {
       p = dataframe::utils::get<double>(params, "p");
       connection_distribution = dataframe::utils::get<int>(params, "connection_distribution", NNS_UNIFORM);
       obc = dataframe::utils::get<int>(params, "obc", false);
+
+      dim = dataframe::utils::get<int>(params, "dim", 2);
+
+      sample_configurations = dataframe::utils::get<int>(params, "sample_configurations", false);
 
       init_state();
     }
@@ -93,10 +134,23 @@ class LatticeNeuralSimulator: public dataframe::Simulator {
       dataframe::utils::emplace(samples, "order_abs", std::abs(s));
     }
 
+    void add_configuration_samples(dataframe::data_t& samples) {
+      std::vector<double> _state(state.connections.num_vertices);
+      for (size_t i = 0; i < state.connections.num_vertices; i++) {
+        _state[i] = state.connections.vals[i];
+      }
+
+      dataframe::utils::emplace(samples, "spins", _state);
+    }
+
 		virtual dataframe::data_t take_samples() override {
       dataframe::data_t samples;
 
       add_order_sample(samples);
+
+      if (sample_configurations) {
+        add_configuration_samples(samples);
+      }
 
       return samples;
     }
